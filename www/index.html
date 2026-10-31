@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rust 消消乐 Match-3</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>💎 Rust 消消乐</h1>
+<div class="bar">
+  <div>分数 <b id="score">0</b></div><div>步数 <b id="moves">30</b></div><div>最高 <b id="best">0</b></div>
+  <button id="new">新游戏</button><button id="hintBtn">提示</button>
+</div>
+<div id="combo"></div>
+<div id="board"></div>
+<div id="over" class="hidden"><div><h2>游戏结束</h2><p>得分 <b id="final">0</b></p><button id="again">再来一局</button></div></div>
+<script type="module">
+import init, { Match3 } from "./pkg/rust_match3.js";
+await init();
+const GEMS = ["🍎","💎","🍋","🍀","🍇","🔶"];
+const MOVES = 30, W = 8;
+const $ = id => document.getElementById(id);
+const boardEl = $("board");
+let game, sel = null, busy = false;
+const cells = [];
+for (let i = 0; i < 64; i++) { const d = document.createElement("div"); d.className = "cell"; d.dataset.i = i; boardEl.appendChild(d); cells.push(d); }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const best = () => +(localStorage.getItem("m3best") || 0);
+function render(b) { b.forEach((g, i) => { cells[i].textContent = GEMS[g] ?? ""; cells[i].className = "cell" + (i === sel ? " sel" : ""); }); }
+function hud() { $("score").textContent = game.score(); $("moves").textContent = game.moves_left(); $("best").textContent = best(); }
+function newGame() { game = new Match3(Math.random() * 2 ** 52 + 1, MOVES); sel = null; $("over").classList.add("hidden"); render(game.board()); hud(); }
+async function doSwap(a, b) {
+  busy = true; sel = null;
+  const before = game.board(); const r = game.swap(a, b);
+  if (r === 1) { cells[a].classList.add("shake"); cells[b].classList.add("shake"); await sleep(300); render(before); }
+  else if (r >= 2) {
+    const sw = before.slice(); [sw[a], sw[b]] = [sw[b], sw[a]]; render(sw); await sleep(150);
+    for (let s = 0; s < game.step_count(); s++) {
+      for (const i of game.step_cleared(s)) cells[i].classList.add("pop");
+      const c = game.step_combo(s); $("combo").textContent = c > 1 ? `连击 x${c}! +${game.step_points(s)}` : `+${game.step_points(s)}`;
+      await sleep(280);
+      render(game.step_board(s)); cells.forEach(e => e.classList.add("fall")); await sleep(250);
+    }
+    render(game.board()); if (r === 3) $("combo").textContent = "没有可走的步，已重新洗牌";
+    if (game.score() > best()) localStorage.setItem("m3best", game.score());
+    hud();
+    if (game.is_over()) { $("final").textContent = game.score(); $("over").classList.remove("hidden"); }
+  } else render(before);
+  busy = false;
+}
+const adj = (a, b) => (Math.floor(a / W) === Math.floor(b / W) && Math.abs(a - b) === 1) || Math.abs(a - b) === W;
+let start = null;
+boardEl.addEventListener("pointerdown", e => { const t = e.target.closest(".cell"); if (!t || busy) return; start = { i: +t.dataset.i, x: e.clientX, y: e.clientY }; });
+boardEl.addEventListener("pointerup", e => {
+  if (!start || busy) return; const s = start; start = null;
+  const dx = e.clientX - s.x, dy = e.clientY - s.y;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) > 20) {           // drag / swipe
+    const c = s.i % W, r = Math.floor(s.i / W); let t;
+    if (Math.abs(dx) > Math.abs(dy)) t = dx > 0 && c < 7 ? s.i + 1 : dx < 0 && c > 0 ? s.i - 1 : null;
+    else t = dy > 0 && r < 7 ? s.i + W : dy < 0 && r > 0 ? s.i - W : null;
+    if (t !== null) doSwap(s.i, t); return;
+  }
+  if (sel === null) sel = s.i; else if (sel === s.i) sel = null;   // tap-select
+  else if (adj(sel, s.i)) { doSwap(sel, s.i); return; } else sel = s.i;
+  render(game.board());
+});
+$("new").onclick = newGame; $("again").onclick = newGame;
+$("hintBtn").onclick = () => { const h = game.hint(); h.forEach(i => cells[i].classList.add("hint")); };
+newGame();
+</script>
+</body>
+</html>

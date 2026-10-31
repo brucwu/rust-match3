@@ -1,0 +1,19 @@
+body{font-family:system-ui,sans-serif;background:linear-gradient(#2b1055,#7597de);color:#fff;display:flex;flex-direction:column;align-items:center;margin:0;min-height:100vh;touch-action:none}
+h1{margin:16px 0 8px}
+.bar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:center}
+.bar b{font-size:1.3em}
+button{background:#ffcc33;border:0;border-radius:8px;padding:8px 14px;font-weight:bold;cursor:pointer}
+#combo{height:28px;margin:6px;font-weight:bold;color:#ffe066}
+#board{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;width:min(92vw,480px);aspect-ratio:1;background:#0003;padding:6px;border-radius:12px;user-select:none}
+.cell{display:flex;align-items:center;justify-content:center;font-size:min(8vw,40px);background:#fff2;border-radius:8px;cursor:pointer;transition:transform .15s}
+.cell.sel{background:#fff7;transform:scale(1.1)}
+.cell.hint{outline:3px solid #ffe066}
+.cell.pop{animation:pop .28s forwards}
+.cell.fall{animation:fall .25s}
+.cell.shake{animation:shake .3s}
+@keyframes pop{to{transform:scale(0) rotate(90deg);opacity:0}}
+@keyframes fall{from{transform:translateY(-30%);opacity:.4}to{transform:none;opacity:1}}
+@keyframes shake{25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+#over{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;text-align:center}
+#over>div{background:#2b1055;padding:24px 40px;border-radius:16px}
+.hidden{display:none!important}

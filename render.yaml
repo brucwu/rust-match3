@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: rust-match3
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: "10000"
