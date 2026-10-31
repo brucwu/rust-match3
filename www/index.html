@@ -2,12 +2,14 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rust 消消乐 Match-3</title>
+<title>萬聖三消 Spooky Match</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Creepster&display=swap" rel="stylesheet">
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<h1>💎 Rust 消消乐</h1>
+<div id="sky"><div class="moon"></div><div class="fog f1"></div><div class="fog f2"></div><span class="bat b1">🦇</span><span class="bat b2">🦇</span><span class="bat b3">🦇</span><div class="web wl"></div><div class="web wr"></div></div>
+<h1>🎃 萬聖三消 <span>Spooky Match</span></h1>
 <div class="bar">
   <div>分数 <b id="score">0</b></div><div>步数 <b id="moves">30</b></div><div>最高 <b id="best">0</b></div>
   <button id="new">新游戏</button><button id="hintBtn">提示</button><button id="mute">🔊</button>
@@ -17,14 +19,14 @@
   <canvas id="fx"></canvas>
   <div id="layer"></div>
 </div>
-<div id="over" class="hidden"><div><h2>游戏结束</h2><p>得分 <b id="final">0</b></p><button id="again">再来一局</button></div></div>
-<!-- juice-v3 -->
+<div id="over" class="hidden"><div><h2>糖果收集完畢 🎃</h2><p>今晚收穫 <b id="final">0</b></p><button id="again">再搗蛋一次 👻</button></div></div>
+<!-- juice-v3 --><!-- halloween-v1 -->
 <script type="module">
 import init, { Match3 } from "./pkg/rust_match3.js";
 await init();
-const GEMS = ["🍎","💎","🍋","🍀","🍇","🔶"];
-const COLORS = ["#ff4d4d","#4dc3ff","#ffe14d","#4dff88","#b84dff","#ff9a3d"];
-const LABELS = ["", "", "Good!", "Great!", "Amazing!", "Incredible!", "Unbelievable!"];
+const GEMS = ["🎃","👻","🦇","🕷️","💀","🍬"];
+const COLORS = ["#ff7a1a","#e8f4ff","#9b4dff","#5dff4d","#efe6c8","#ff5cb8"];
+const LABELS = ["", "", "Spooky!", "Creepy!", "Haunting!", "Terrifying!", "Nightmare!"];
 const MOVES = 30, W = 8;
 const $ = id => document.getElementById(id);
 const boardEl = $("board"), wrap = $("wrap"), layer = $("layer"), cv = $("fx"), ctx = cv.getContext("2d");
@@ -61,7 +63,7 @@ const sfx0 = {
   swap: () => noise(.15, .15, 500),
   bad: () => { tone(110, .18, "square", .12); tone(90, .18, "square", .1, 0, .08); },
   pop: (lvl, big) => { const f = 440 * Math.pow(2, (lvl - 1) * 2 / 12); tone(f, .12, "triangle", .3, 1.8); tone(f * 1.5, .08, "sine", .15, 1.5, .03); noise(.08, .12, 2000); if (big) tone(f / 2, .35, "sawtooth", .15, .5); },
-  chime: lvl => [0, 4, 7, 12].slice(0, Math.min(4, lvl)).forEach((s, k) => tone(660 * Math.pow(2, (s + lvl) / 12), .3, "sine", .18, 0, k * .06)),
+  chime: lvl => [0, 3, 6, 10].slice(0, Math.min(4, lvl)).forEach((s, k) => { const f = 330 * Math.pow(2, (s + lvl) / 12); tone(f, .45, "triangle", .14, .97, k * .08); tone(f * 1.012, .45, "sine", .1, 1.03, k * .08); }),
 };
 const sfx = Object.fromEntries(Object.entries(sfx0).map(([k,f])=>[k,safe(f)]));
 const buzz = p => { if (navigator.vibrate) try { navigator.vibrate(p); } catch {} };
@@ -103,7 +105,7 @@ function popup(i, text, scale, color) {
 }
 function comboText(lvl) {
   const d = document.createElement("div"); d.className = "combo";
-  const hue = (50 - lvl * 25 + 360) % 360;
+  const hue = lvl % 2 ? 28 : 110;
   d.innerHTML = `Combo x${lvl}<small>${LABELS[Math.min(lvl, LABELS.length - 1)]}</small>`;
   d.style.cssText = `font-size:${28 + lvl * 8}px;color:hsl(${hue},100%,62%);--sh:${lvl * 2}px`;
   layer.appendChild(d); setTimeout(() => d.remove(), 1000);
@@ -129,7 +131,7 @@ function groups(cleared) {
 }
 
 /* ---------- rendering / game flow ---------- */
-function render(b) { b.forEach((g, i) => { cells[i].textContent = GEMS[g] ?? ""; cells[i].className = "cell" + (i === sel ? " sel" : ""); }); }
+function render(b) { b.forEach((g, i) => { cells[i].textContent = GEMS[g] ?? ""; cells[i].className = "cell g" + g + (i === sel ? " sel" : ""); }); }
 function hud() { $("moves").textContent = game.moves_left(); $("best").textContent = best(); }
 function newGame() { game = new Match3(Math.random() * 2 ** 52 + 1, MOVES); sel = null; shown = 0; $("score").textContent = 0; $("over").classList.add("hidden"); render(game.board()); hud(); }
 
@@ -146,8 +148,8 @@ async function clearStep(s, prevBoard) {
   for (const g of gs) {
     const mid = g[g.length >> 1], color = COLORS[prevBoard[mid]] || "#fff";
     if (g.length >= 4) { ring(mid, color, g.length >= 5 ? 4.5 : 3); ring(mid, "#fff", g.length >= 5 ? 3 : 2); }
-    popup(mid, "+" + Math.round(pts * g.length / cleared.length), 1 + (g.length - 3) * .45 + (lvl - 1) * .2, g.length >= 5 ? "#ff5cf0" : g.length >= 4 ? "#ffe066" : "#fff");
-    if (g.length >= 5) popup(mid, "SUPER!", 1.6, "#ff5cf0");
+    popup(mid, "+" + Math.round(pts * g.length / cleared.length), 1 + (g.length - 3) * .45 + (lvl - 1) * .2, g.length >= 5 ? "#7dff4d" : g.length >= 4 ? "#ffb347" : "#ff8c1a");
+    if (g.length >= 5) popup(mid, "BOO!", 1.6, "#7dff4d");
   }
   kick();
   shake(4 + cleared.length * 1.2 + (lvl - 1) * 5 + (big ? 6 : 0), 220 + lvl * 40);
