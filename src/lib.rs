@@ -26,6 +26,10 @@ impl Match3 {
     pub fn step_board(&self, i: usize) -> Vec<u8> { self.g.last_steps[i].board_after.clone() }
     pub fn step_combo(&self, i: usize) -> u32 { self.g.last_steps[i].combo }
     pub fn step_points(&self, i: usize) -> u32 { self.g.last_steps[i].points }
+    /// Flat [cell, kind, cell, kind, ...] of specials fired in step i.
+    pub fn step_effects(&self, i: usize) -> Vec<u32> { self.g.last_steps[i].effects.iter().flat_map(|&(c, k)| [c as u32, k as u32]).collect() }
+    /// Flat [cell, encoded, ...] of specials created in step i.
+    pub fn step_spawned(&self, i: usize) -> Vec<u32> { self.g.last_steps[i].spawned.iter().flat_map(|&(c, v)| [c as u32, v as u32]).collect() }
     /// Hint: returns [a, b] or empty.
     pub fn hint(&self) -> Vec<u32> { game::find_move(&self.g.board).map(|(a, b)| vec![a as u32, b as u32]).unwrap_or_default() }
 }

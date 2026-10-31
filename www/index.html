@@ -20,12 +20,13 @@
   <div id="layer"></div>
 </div>
 <div id="over" class="hidden"><div><h2>糖果收集完畢 🎃</h2><p>今晚收穫 <b id="final">0</b></p><button id="again">再搗蛋一次 👻</button></div></div>
-<!-- juice-v3 --><!-- halloween-v1 -->
+<!-- juice-v3 --><!-- halloween-v1 --><!-- halloween-v2-specials -->
 <script type="module">
 import init, { Match3 } from "./pkg/rust_match3.js";
 await init();
-const GEMS = ["🎃","👻","🦇","🕷️","💀","🍬"];
-const COLORS = ["#ff7a1a","#e8f4ff","#9b4dff","#5dff4d","#efe6c8","#ff5cb8"];
+const GEMS = ["🎃","👻","🦇","💀","🍬"];
+const COLORS = ["#ff7a1a","#e8f4ff","#9b4dff","#efe6c8","#ff5cb8"];
+const colOf = v => COLORS[v & 15] || "#c77dff";
 const LABELS = ["", "", "Spooky!", "Creepy!", "Haunting!", "Terrifying!", "Nightmare!"];
 const MOVES = 30, W = 8;
 const $ = id => document.getElementById(id);
@@ -65,6 +66,7 @@ const sfx0 = {
   pop: (lvl, big) => { const f = 440 * Math.pow(2, (lvl - 1) * 2 / 12); tone(f, .12, "triangle", .3, 1.8); tone(f * 1.5, .08, "sine", .15, 1.5, .03); noise(.08, .12, 2000); if (big) tone(f / 2, .35, "sawtooth", .15, .5); },
   chime: lvl => [0, 3, 6, 10].slice(0, Math.min(4, lvl)).forEach((s, k) => { const f = 330 * Math.pow(2, (s + lvl) / 12); tone(f, .45, "triangle", .14, .97, k * .08); tone(f * 1.012, .45, "sine", .1, 1.03, k * .08); }),
 };
+sfx0.boom = () => { tone(70, .5, "sawtooth", .25, .4); noise(.4, .3, 200); tone(1200, .25, "square", .06, .3, .02); };
 const sfx = Object.fromEntries(Object.entries(sfx0).map(([k,f])=>[k,safe(f)]));
 const buzz = p => { if (navigator.vibrate) try { navigator.vibrate(p); } catch {} };
 
@@ -91,8 +93,15 @@ function loop() {
   }
   rings = rings.filter(r => (r.life -= .04) > 0);
   for (const r of rings) { r.r += (r.max - r.r) * .18; ctx.globalAlpha = r.life; ctx.strokeStyle = r.color; ctx.lineWidth = 6 * r.life; ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, 7); ctx.stroke(); }
+  bolts = bolts.filter(b => (b.life -= .045) > 0);
+  for (const b of bolts) {
+    ctx.globalAlpha = b.life; ctx.strokeStyle = Math.random() < .5 ? "#e0b3ff" : "#fff"; ctx.lineWidth = 2.5; ctx.shadowColor = "#b84dff"; ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.moveTo(b.x, b.y);
+    for (let t = 1; t <= 6; t++) { const f = t / 6; ctx.lineTo(b.x + (b.tx - b.x) * f + (t < 6 ? (Math.random() - .5) * 18 : 0), b.y + (b.ty - b.y) * f + (t < 6 ? (Math.random() - .5) * 18 : 0)); }
+    ctx.stroke(); ctx.shadowBlur = 0;
+  }
   ctx.globalAlpha = 1;
-  raf = parts.length || rings.length ? requestAnimationFrame(loop) : 0;
+  raf = parts.length || rings.length || bolts.length ? requestAnimationFrame(loop) : 0;
 }
 const kick = () => { if (!raf) raf = requestAnimationFrame(loop); };
 
@@ -130,8 +139,31 @@ function groups(cleared) {
   return out;
 }
 
+/* ---------- special effects ---------- */
+let bolts = [];
+function beam(i, vertical) {
+  const d = document.createElement("div"), c = cells[i].getBoundingClientRect(), w = wrap.getBoundingClientRect();
+  d.className = "beam " + (vertical ? "v" : "h");
+  if (vertical) d.style.left = (c.left - w.left + c.width / 2) + "px"; else d.style.top = (c.top - w.top + c.height / 2) + "px";
+  layer.appendChild(d); setTimeout(() => d.remove(), 450);
+}
+function specialFx(i, k, prev, cleared) {
+  try {
+    if (k === 1) beam(i, false);
+    else if (k === 2) beam(i, true);
+    else if (k === 3) { ring(i, "#ff8c1a", 5); ring(i, "#fff", 3.5); }
+    else if (k === 4) {
+      const [x, y] = center(i);
+      for (const j of cleared) if (j !== i) { const [tx, ty] = center(j); bolts.push({ x, y, tx, ty, life: 1 }); }
+      ring(i, "#c77dff", 6); kick();
+    }
+  } catch (e) { console.warn("fx", e); }
+}
+
 /* ---------- rendering / game flow ---------- */
-function render(b) { b.forEach((g, i) => { cells[i].textContent = GEMS[g] ?? ""; cells[i].className = "cell g" + g + (i === sel ? " sel" : ""); }); }
+function render(b) { b.forEach((v, i) => { const c = v & 15, k = v >> 4;
+  cells[i].textContent = v === 255 ? "" : k === 4 ? "🔮" : (GEMS[c] ?? "");
+  cells[i].className = "cell g" + c + (k ? " sp" + k : "") + (i === sel ? " sel" : ""); }); }
 function hud() { $("moves").textContent = game.moves_left(); $("best").textContent = best(); }
 function newGame() { game = new Match3(Math.random() * 2 ** 52 + 1, MOVES); sel = null; shown = 0; $("score").textContent = 0; $("over").classList.add("hidden"); render(game.board()); hud(); }
 
@@ -142,11 +174,15 @@ async function clearStep(s, prevBoard) {
   for (const i of cleared) cells[i].classList.add("flash");
   sfx.pop(lvl, big); buzz(lvl > 1 ? [20, 30, 20 * lvl] : 15);
   await sleep(70);                                   // hit-stop
-  // 2) burst
+  // 2) specials fire
+  const eff = Array.from(game.step_effects(s));
+  for (let k = 0; k < eff.length; k += 2) specialFx(eff[k], eff[k + 1], prevBoard, cleared);
+  if (eff.length) { shake(18 + eff.length * 3, 420); sfx.boom(); buzz([30, 20, 60]); }
+  // 2b) burst
   const per = Math.min(22, 8 + lvl * 3 + (big ? 6 : 0));
-  for (const i of cleared) { burst(i, COLORS[prevBoard[i]] || "#fff", per, 1 + lvl * .15 + (big ? .4 : 0)); cells[i].classList.add("pop"); }
+  for (const i of cleared) { burst(i, colOf(prevBoard[i]), per, 1 + lvl * .15 + (big ? .4 : 0)); cells[i].classList.add("pop"); }
   for (const g of gs) {
-    const mid = g[g.length >> 1], color = COLORS[prevBoard[mid]] || "#fff";
+    const mid = g[g.length >> 1], color = colOf(prevBoard[mid]);
     if (g.length >= 4) { ring(mid, color, g.length >= 5 ? 4.5 : 3); ring(mid, "#fff", g.length >= 5 ? 3 : 2); }
     popup(mid, "+" + Math.round(pts * g.length / cleared.length), 1 + (g.length - 3) * .45 + (lvl - 1) * .2, g.length >= 5 ? "#7dff4d" : g.length >= 4 ? "#ffb347" : "#ff8c1a");
     if (g.length >= 5) popup(mid, "BOO!", 1.6, "#7dff4d");
@@ -156,6 +192,8 @@ async function clearStep(s, prevBoard) {
   if (lvl >= 2) { comboText(lvl); sfx.chime(lvl); }
   tickScore();
   await sleep(230);
+  const sp = Array.from(game.step_spawned(s));
+  for (let k = 0; k < sp.length; k += 2) { ring(sp[k], "#c77dff", 2.5); popup(sp[k], (sp[k+1] >> 4) === 4 ? "🔮 魔法球!" : (sp[k+1] >> 4) === 3 ? "💥 炸彈!" : "⚡ 直線炸彈!", 1.1, "#ffb347"); }
   // 3) fall in
   const nb = game.step_board(s); render(nb);
   for (let i = 0; i < 64; i++) cells[i].style.animationDelay = (Math.floor(i / W) * 0) + "ms";
