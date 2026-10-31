@@ -9,39 +9,169 @@
 <h1>💎 Rust 消消乐</h1>
 <div class="bar">
   <div>分数 <b id="score">0</b></div><div>步数 <b id="moves">30</b></div><div>最高 <b id="best">0</b></div>
-  <button id="new">新游戏</button><button id="hintBtn">提示</button>
+  <button id="new">新游戏</button><button id="hintBtn">提示</button><button id="mute">🔊</button>
 </div>
-<div id="combo"></div>
-<div id="board"></div>
+<div id="wrap">
+  <div id="board"></div>
+  <canvas id="fx"></canvas>
+  <div id="layer"></div>
+</div>
 <div id="over" class="hidden"><div><h2>游戏结束</h2><p>得分 <b id="final">0</b></p><button id="again">再来一局</button></div></div>
+<!-- juice-v2 -->
 <script type="module">
 import init, { Match3 } from "./pkg/rust_match3.js";
 await init();
 const GEMS = ["🍎","💎","🍋","🍀","🍇","🔶"];
+const COLORS = ["#ff4d4d","#4dc3ff","#ffe14d","#4dff88","#b84dff","#ff9a3d"];
+const LABELS = ["", "", "Good!", "Great!", "Amazing!", "Incredible!", "Unbelievable!"];
 const MOVES = 30, W = 8;
 const $ = id => document.getElementById(id);
-const boardEl = $("board");
+const boardEl = $("board"), wrap = $("wrap"), layer = $("layer"), cv = $("fx"), ctx = cv.getContext("2d");
 let game, sel = null, busy = false;
 const cells = [];
 for (let i = 0; i < 64; i++) { const d = document.createElement("div"); d.className = "cell"; d.dataset.i = i; boardEl.appendChild(d); cells.push(d); }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const best = () => +(localStorage.getItem("m3best") || 0);
+
+/* ---------- sound (WebAudio, synthesized) ---------- */
+let ac = null, muted = localStorage.getItem("m3mute") === "1";
+const muteBtn = $("mute"); muteBtn.textContent = muted ? "🔇" : "🔊";
+muteBtn.onclick = () => { muted = !muted; localStorage.setItem("m3mute", muted ? "1" : "0"); muteBtn.textContent = muted ? "🔇" : "🔊"; };
+function audio() { if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === "suspended") ac.resume(); return ac; }
+addEventListener("pointerdown", audio, { once: true }); addEventListener("keydown", audio, { once: true });
+function tone(freq, dur, type = "sine", vol = .25, slide = 0, delay = 0) {
+  if (muted || !ac) return;
+  const t = ac.currentTime + delay, o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq * slide), t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t + dur + .02);
+}
+function noise(dur, vol = .2, hp = 800, delay = 0) {
+  if (muted || !ac) return;
+  const t = ac.currentTime + delay, n = ac.sampleRate * dur, b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+  const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+  s.buffer = b; f.type = "bandpass"; f.frequency.setValueAtTime(hp, t); f.frequency.exponentialRampToValueAtTime(hp * 4, t + dur);
+  g.gain.value = vol; s.connect(f).connect(g).connect(ac.destination); s.start(t);
+}
+const sfx = {
+  swap: () => noise(.15, .15, 500),
+  bad: () => { tone(110, .18, "square", .12); tone(90, .18, "square", .1, 0, .08); },
+  pop: (lvl, big) => { const f = 440 * Math.pow(2, (lvl - 1) * 2 / 12); tone(f, .12, "triangle", .3, 1.8); tone(f * 1.5, .08, "sine", .15, 1.5, .03); noise(.08, .12, 2000); if (big) tone(f / 2, .35, "sawtooth", .15, .5); },
+  chime: lvl => [0, 4, 7, 12].slice(0, Math.min(4, lvl)).forEach((s, k) => tone(660 * Math.pow(2, (s + lvl) / 12), .3, "sine", .18, 0, k * .06)),
+};
+const buzz = p => { if (navigator.vibrate) try { navigator.vibrate(p); } catch {} };
+
+/* ---------- particles (single canvas, rAF, capped) ---------- */
+const MAX_P = 350; let parts = [], rings = [], raf = 0;
+function resize() { const r = wrap.getBoundingClientRect(), d = devicePixelRatio || 1; cv.width = r.width * d; cv.height = r.height * d; ctx.setTransform(d, 0, 0, d, 0, 0); }
+addEventListener("resize", resize);
+function center(i) { const c = cells[i].getBoundingClientRect(), w = wrap.getBoundingClientRect(); return [c.left - w.left + c.width / 2, c.top - w.top + c.height / 2, c.width]; }
+function burst(i, color, n, power) {
+  const [x, y] = center(i);
+  for (let k = 0; k < n && parts.length < MAX_P; k++) {
+    const a = Math.random() * Math.PI * 2, v = (2 + Math.random() * 4) * power;
+    parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 2, life: 1, r: 2 + Math.random() * 4, color, sq: Math.random() < .4 });
+  }
+}
+function ring(i, color, size) { const [x, y, w] = center(i); rings.push({ x, y, r: w * .3, max: w * size, life: 1, color }); }
+function loop() {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  parts = parts.filter(p => (p.life -= .025) > 0);
+  for (const p of parts) {
+    p.vy += .25; p.vx *= .97; p.x += p.vx; p.y += p.vy;
+    ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+    if (p.sq) ctx.fillRect(p.x - p.r, p.y - p.r, p.r * 2, p.r * 2); else { ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life + .5, 0, 7); ctx.fill(); }
+  }
+  rings = rings.filter(r => (r.life -= .04) > 0);
+  for (const r of rings) { r.r += (r.max - r.r) * .18; ctx.globalAlpha = r.life; ctx.strokeStyle = r.color; ctx.lineWidth = 6 * r.life; ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, 7); ctx.stroke(); }
+  ctx.globalAlpha = 1;
+  raf = parts.length || rings.length ? requestAnimationFrame(loop) : 0;
+}
+const kick = () => { if (!raf) raf = requestAnimationFrame(loop); };
+
+/* ---------- screen shake, popups, combo text ---------- */
+function shake(px, ms = 260) { wrap.animate([...Array(6)].map((_, k) => ({ transform: `translate(${(Math.random() - .5) * px * (1 - k / 6)}px,${(Math.random() - .5) * px * (1 - k / 6)}px)` })).concat([{ transform: "none" }]), { duration: ms }); }
+function popup(i, text, scale, color) {
+  const [x, y] = center(i), d = document.createElement("div");
+  d.className = "popup"; d.textContent = text; d.style.cssText = `left:${x}px;top:${y}px;font-size:${18 * scale}px;color:${color}`;
+  layer.appendChild(d); setTimeout(() => d.remove(), 900);
+}
+function comboText(lvl) {
+  const d = document.createElement("div"); d.className = "combo";
+  const hue = (50 - lvl * 25 + 360) % 360;
+  d.innerHTML = `Combo x${lvl}<small>${LABELS[Math.min(lvl, LABELS.length - 1)]}</small>`;
+  d.style.cssText = `font-size:${28 + lvl * 8}px;color:hsl(${hue},100%,62%);--sh:${lvl * 2}px`;
+  layer.appendChild(d); setTimeout(() => d.remove(), 1000);
+}
+/* score tick-up */
+let shown = 0, tickRaf = 0;
+function tickScore() {
+  const target = game.score(); cancelAnimationFrame(tickRaf);
+  const step = () => { shown += Math.max(1, Math.ceil((target - shown) * .15)); if (shown >= target) shown = target;
+    $("score").textContent = shown; if (shown < target) tickRaf = requestAnimationFrame(step); else $("score").classList.remove("bump"); };
+  $("score").classList.add("bump"); step();
+}
+
+/* longest straight run among cleared cells (for 4/5 emphasis) + its center cell */
+function groups(cleared) {
+  const set = new Set(cleared), out = [];
+  for (const [d, ok] of [[1, i => i % W !== 0], [W, () => true]]) for (const i of cleared) {
+    if (set.has(i - d) && ok(i)) continue;
+    let run = [i]; while (set.has(run.at(-1) + d) && (d === W || (run.at(-1) + 1) % W !== 0)) run.push(run.at(-1) + d);
+    if (run.length >= 3) out.push(run);
+  }
+  return out;
+}
+
+/* ---------- rendering / game flow ---------- */
 function render(b) { b.forEach((g, i) => { cells[i].textContent = GEMS[g] ?? ""; cells[i].className = "cell" + (i === sel ? " sel" : ""); }); }
-function hud() { $("score").textContent = game.score(); $("moves").textContent = game.moves_left(); $("best").textContent = best(); }
-function newGame() { game = new Match3(Math.random() * 2 ** 52 + 1, MOVES); sel = null; $("over").classList.add("hidden"); render(game.board()); hud(); }
+function hud() { $("moves").textContent = game.moves_left(); $("best").textContent = best(); }
+function newGame() { game = new Match3(Math.random() * 2 ** 52 + 1, MOVES); sel = null; shown = 0; $("score").textContent = 0; $("over").classList.add("hidden"); render(game.board()); hud(); }
+
+async function clearStep(s, prevBoard) {
+  const cleared = game.step_cleared(s), lvl = game.step_combo(s), pts = game.step_points(s), gs = groups(cleared);
+  const maxRun = Math.max(3, ...gs.map(g => g.length)), big = maxRun >= 4;
+  // 1) flash white + scale pop, then hit-stop
+  for (const i of cleared) cells[i].classList.add("flash");
+  sfx.pop(lvl, big); buzz(lvl > 1 ? [20, 30, 20 * lvl] : 15);
+  await sleep(70);                                   // hit-stop
+  // 2) burst
+  const per = Math.min(22, 8 + lvl * 3 + (big ? 6 : 0));
+  for (const i of cleared) { burst(i, COLORS[prevBoard[i]] || "#fff", per, 1 + lvl * .15 + (big ? .4 : 0)); cells[i].classList.add("pop"); }
+  for (const g of gs) {
+    const mid = g[g.length >> 1], color = COLORS[prevBoard[mid]] || "#fff";
+    if (g.length >= 4) { ring(mid, color, g.length >= 5 ? 4.5 : 3); ring(mid, "#fff", g.length >= 5 ? 3 : 2); }
+    popup(mid, "+" + Math.round(pts * g.length / cleared.length), 1 + (g.length - 3) * .45 + (lvl - 1) * .2, g.length >= 5 ? "#ff5cf0" : g.length >= 4 ? "#ffe066" : "#fff");
+    if (g.length >= 5) popup(mid, "SUPER!", 1.6, "#ff5cf0");
+  }
+  kick();
+  shake(4 + cleared.length * 1.2 + (lvl - 1) * 5 + (big ? 6 : 0), 220 + lvl * 40);
+  if (lvl >= 2) { comboText(lvl); sfx.chime(lvl); }
+  tickScore();
+  await sleep(230);
+  // 3) fall in
+  const nb = game.step_board(s); render(nb);
+  for (let i = 0; i < 64; i++) cells[i].style.animationDelay = (Math.floor(i / W) * 0) + "ms";
+  for (const i of new Set(cleared.flatMap(i => { const c = i % W, r = Math.floor(i / W); return [...Array(r + 1)].map((_, k) => k * W + c); }))) cells[i].classList.add("fall");
+  await sleep(lvl > 1 ? 300 : 260);
+  return nb;
+}
+
 async function doSwap(a, b) {
   busy = true; sel = null;
   const before = game.board(); const r = game.swap(a, b);
-  if (r === 1) { cells[a].classList.add("shake"); cells[b].classList.add("shake"); await sleep(300); render(before); }
-  else if (r >= 2) {
-    const sw = before.slice(); [sw[a], sw[b]] = [sw[b], sw[a]]; render(sw); await sleep(150);
-    for (let s = 0; s < game.step_count(); s++) {
-      for (const i of game.step_cleared(s)) cells[i].classList.add("pop");
-      const c = game.step_combo(s); $("combo").textContent = c > 1 ? `连击 x${c}! +${game.step_points(s)}` : `+${game.step_points(s)}`;
-      await sleep(280);
-      render(game.step_board(s)); cells.forEach(e => e.classList.add("fall")); await sleep(250);
-    }
-    render(game.board()); if (r === 3) $("combo").textContent = "没有可走的步，已重新洗牌";
+  if (r === 1) {
+    sfx.bad(); buzz(40);
+    cells[a].classList.add("shake"); cells[b].classList.add("shake"); await sleep(320); render(before);
+  } else if (r >= 2) {
+    sfx.swap();
+    let cur = before.slice(); [cur[a], cur[b]] = [cur[b], cur[a]]; render(cur);
+    cells[a].classList.add("swapin"); cells[b].classList.add("swapin"); await sleep(140);
+    for (let s = 0; s < game.step_count(); s++) cur = await clearStep(s, cur);  // sequential cascade steps
+    render(game.board());
+    if (r === 3) popup(27, "洗牌!", 1.4, "#9ff");
     if (game.score() > best()) localStorage.setItem("m3best", game.score());
     hud();
     if (game.is_over()) { $("final").textContent = game.score(); $("over").classList.remove("hidden"); }
@@ -54,19 +184,19 @@ boardEl.addEventListener("pointerdown", e => { const t = e.target.closest(".cell
 boardEl.addEventListener("pointerup", e => {
   if (!start || busy) return; const s = start; start = null;
   const dx = e.clientX - s.x, dy = e.clientY - s.y;
-  if (Math.max(Math.abs(dx), Math.abs(dy)) > 20) {           // drag / swipe
+  if (Math.max(Math.abs(dx), Math.abs(dy)) > 20) {
     const c = s.i % W, r = Math.floor(s.i / W); let t;
     if (Math.abs(dx) > Math.abs(dy)) t = dx > 0 && c < 7 ? s.i + 1 : dx < 0 && c > 0 ? s.i - 1 : null;
     else t = dy > 0 && r < 7 ? s.i + W : dy < 0 && r > 0 ? s.i - W : null;
     if (t !== null) doSwap(s.i, t); return;
   }
-  if (sel === null) sel = s.i; else if (sel === s.i) sel = null;   // tap-select
+  if (sel === null) sel = s.i; else if (sel === s.i) sel = null;
   else if (adj(sel, s.i)) { doSwap(sel, s.i); return; } else sel = s.i;
   render(game.board());
 });
 $("new").onclick = newGame; $("again").onclick = newGame;
-$("hintBtn").onclick = () => { const h = game.hint(); h.forEach(i => cells[i].classList.add("hint")); };
-newGame();
+$("hintBtn").onclick = () => game.hint().forEach(i => cells[i].classList.add("hint"));
+resize(); newGame();
 </script>
 </body>
 </html>
